@@ -2,3 +2,6 @@
 /venv/*
 *.csv
 .DS_Store
+*.html
+/env/
+*.png
