@@ -5,43 +5,41 @@ import os
 from torch.utils.data import Dataset
 import random
 from PIL import Image
-from transformers import CLIPImageProcessor
-from transformers import CLIPTokenizer
+from transformers import CLIPImageProcessor, CLIPTokenizer
 import torchvision.transforms as transforms
-import timm 
+import open_clip
+import pandas as pd
 
-class TextModalityDataset(Dataset):
-    """Creates text modality dataset for ShapeNetSem with CLIP Tokenizer
+class CLIPTextModalityDataset(Dataset):
+    """Creates text modality dataset for ShapeNetSem with CLIP Tokenizer"""
 
-    Args:
-        Dataset (_type_): _description_
-    """
-    def __init__(self, dataset_path, tokenizer=None, max_length=77):
+    def __init__(self, dataset_path, max_length=77):
         super().__init__()
         self.dataframe = pd.read_csv(dataset_path)
-        self.tokenizer = tokenizer if tokenizer else CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
+        self.tokenizer = open_clip.tokenize  # Use OpenCLIP's built-in tokenizer
         self.max_length = max_length
-    
+
     def __len__(self):
         return len(self.dataframe)
-    
+
     def __getitem__(self, idx):
+        """
+        Returns:
+            idx (int): Index
+            tokenized_text (torch.Tensor): Tokenized text for CLIP
+            text_prompt (str): The actual text prompt
+        """
         mesh_id = self.dataframe.loc[idx, 'fullId']
 
-        # Text Modality
-        templates = self.dataframe.loc[idx, ['template1_desc','template2_desc','template3_desc']]
-        text_prompt = random.choice(templates.tolist())
+        # Choose a random template description
+        templates = self.dataframe.loc[idx, ['template1_desc', 'template2_desc', 'template3_desc']]
+        text_prompt = random.choice(templates.dropna().tolist())  # Drop NaN values safely
 
-        tokenized_text = self.tokenizer(
-            text_prompt,
-            padding="max_length",
-            truncation=True,
-            max_length = self.max_length,
-            return_tensors = "pt"
-        )
+        # Tokenize using OpenCLIP tokenizer (returns a tensor)
+        tokenized_text = self.tokenizer([text_prompt])  # Shape: [1, 77]
 
-        return tokenized_text["input_ids"].squeeze(0), tokenized_text["attention_mask"].squeeze(0), text_prompt # as of now only returns path for image and mesh
-    
+        return idx, tokenized_text.squeeze(0), text_prompt
+
 class Dinov2ImageModalityDataset(Dataset):
     """Creates image modality dataset for ShapeNetSem with Dinov2 image preprocessing
 
@@ -120,6 +118,31 @@ class CLIPImageModalityDataset(Dataset):
 
         return image_tensor, image_path
 
+class PCModalityDataset(Dataset):
+    """Creates point cloud modality dataset for ShapeNetSem"""
+
+    def __init__(self, dataset_path, pc_dir):
+        super().__init__()
+        self.dataframe = pd.read_csv(dataset_path)
+        self.mesh_ids = self.dataframe['fullId'].to_list()
+        self.pc_dir = pc_dir
+        
+
+    def __len__(self):
+        return len(self.dataframe)
+
+    def __getitem__(self, idx):
+        """
+        Returns:
+            idx (int): Index
+            tokenized_text (torch.Tensor): Tokenized text for CLIP
+            text_prompt (str): The actual text prompt
+        """
+        mesh_id = self.mesh_ids[idx]
+        pc_data = torch.from_numpy(np.load(os.path.join(self.pc_dir, f"{mesh_id}.npy")))
+        
+        return idx, pc_data
+    
 class PairedModalityDataset(Dataset):
     """Creates a paired modality dataset that returns text prompt, image and 3D mesh using index
 
