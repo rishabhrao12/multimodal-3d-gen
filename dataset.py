@@ -121,13 +121,13 @@ class CLIPImageModalityDataset(Dataset):
 class PCModalityDataset(Dataset):
     """Creates point cloud modality dataset for ShapeNetSem"""
 
-    def __init__(self, dataset_path, pc_dir):
+    def __init__(self, dataset_path, pc_dir, num_points=1024):
         super().__init__()
         self.dataframe = pd.read_csv(dataset_path)
         self.mesh_ids = self.dataframe['fullId'].to_list()
         self.pc_dir = pc_dir
+        self.num_points = num_points
         
-
     def __len__(self):
         return len(self.dataframe)
 
@@ -139,9 +139,13 @@ class PCModalityDataset(Dataset):
             text_prompt (str): The actual text prompt
         """
         mesh_id = self.mesh_ids[idx]
-        pc_data = torch.from_numpy(np.load(os.path.join(self.pc_dir, f"{mesh_id}.npy")))
+        point_cloud = np.load(os.path.join(self.pc_dir, f"{mesh_id}.npy"))
+        if point_cloud.shape[0] < self.num_points:
+            raise ValueError("Point cloud has fewer points than the requested sample size.")
+    
+        indices = np.random.choice(point_cloud.shape[0], self.num_points, replace=False)
         
-        return idx, pc_data
+        return idx, torch.from_numpy(point_cloud[indices])
     
 class PairedModalityDataset(Dataset):
     """Creates a paired modality dataset that returns text prompt, image and 3D mesh using index
