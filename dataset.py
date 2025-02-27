@@ -147,34 +147,73 @@ class PCModalityDataset(Dataset):
         
         return idx, torch.from_numpy(point_cloud[indices])
     
-class PairedModalityDataset(Dataset):
+class AlignedModalityDataset(Dataset):
     """Creates a paired modality dataset that returns text prompt, image and 3D mesh using index
 
     Args:
         Dataset (_type_): _description_
     """
-    def __init__(self, dataset_path, image_dir, mesh_dir):
+    def __init__(self, dataset_path, image_dir, pc_dir, max_length=77, transform=None, num_points=1024):
         super().__init__()
+        # For Text
         self.dataframe = pd.read_csv(dataset_path)
+        self.tokenizer = open_clip.tokenize  # Use OpenCLIP's built-in tokenizer
+        self.max_length = max_length
+
+        # For image
         self.image_dir = image_dir
-        self.mesh_dir = mesh_dir
+        self.mesh_ids = self.dataframe['fullId'].to_list()
+        self.transform = transform if transform else transforms.Compose([
+            transforms.Resize((518, 518)),  # Resize to DINO's expected input size
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # DINOv2 normalization
+        ])
+
+        # For PC
+        self.pc_dir = pc_dir
+        self.num_points = num_points
+
     
     def __len__(self):
         return len(self.dataframe)
     
     def __getitem__(self, idx):
+        """
+        Returns:
+            idx (int): Index
+            tokenized_text (torch.Tensor): Tokenized text for CLIP (B, 77)
+            image_tensor (torch.Tensor): preprocessed image for Dinov2 (B, 3, 518, 518)
+            point_cloud (torch.Tensor): point cloud of mesh (B, 1024, 3)
+        """
         mesh_id = self.dataframe.loc[idx, 'fullId']
 
-        # Text Modality
-        templates = self.dataframe.loc[idx, ['template1_desc','template2_desc','template3_desc']]
-        text_prompt = random.choice(templates.tolist())
+        # Choose a random template description
+        templates = self.dataframe.loc[idx, ['template1_desc', 'template2_desc', 'template3_desc']]
+        text_prompt = random.choice(templates.dropna().tolist())  # Drop NaN values safely
 
-        # Image Modality
+        # Tokenize using OpenCLIP tokenizer (returns a tensor)
+        tokenized_text = self.tokenizer([text_prompt])  # Shape: [1, 77]
+
+        # Get image views        
         image_views_dir = os.path.join(self.image_dir, mesh_id)
         image_views = [os.path.join(image_views_dir, f) for f in os.listdir(image_views_dir) if os.path.isfile(os.path.join(image_views_dir, f))]
-        image_prompt = random.choice(image_views.tolist())
+        
+        # If no image views
+        if not image_views:
+            print(f"No views for for {image_views_dir} returning empty tensors")
+            return idx, mesh_id, torch.zeros((3, 518, 518))
+        
+        # Select one view from all
+        image_path = random.choice(image_views)
+        image = Image.open(image_path).convert('RGB')
+        image_tensor = self.transform(image) 
 
-        # 3D Modality
-        mesh_path = os.path.join(self.mesh_dir, mesh_id)
+        # Load point cloud
+        point_cloud = np.load(os.path.join(self.pc_dir, f"{mesh_id}.npy"))
+        if point_cloud.shape[0] < self.num_points:
+            raise ValueError("Point cloud has fewer points than the requested sample size.")
 
-        return text_prompt, image_prompt, mesh_path # as of now only returns path for image and mesh
+        # Randomly sample required points
+        indices = np.random.choice(point_cloud.shape[0], self.num_points, replace=False)
+        
+        return idx, tokenized_text.squeeze(0), image_tensor, torch.from_numpy(point_cloud[indices])
