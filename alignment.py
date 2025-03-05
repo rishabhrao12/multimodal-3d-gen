@@ -1,6 +1,8 @@
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
+import pandas as pd
+import numpy as np
 
 class NTXentLoss(torch.nn.Module):
     def __init__(self, temperature=0.07):
@@ -64,3 +66,32 @@ class AlignEncoder(nn.Module):
         pc_proj = self.pc_proj_head(pc)
 
         return text_proj, img_proj, pc_proj
+
+class CrossModalRetrival:
+    def __init__(self, dataset_path, embedding_path, device='cpu'):
+        self.device = device
+        self.dataset_path = dataset_path
+        self.embedding_path = embedding_path
+        self.embeddings = {}
+        self.index = None
+        self.categories = None
+
+    def load_embeddings(self):
+        self.dataframe = pd.read_csv(self.dataset_path)
+        data = torch.load(self.embedding_path)
+        self.embeddings["text"] = data["text_proj"].numpy()
+        self.embeddings["img"] = data["img_proj"].numpy()
+        self.embeddings["pc"] = data["pc_proj"].numpy()
+        self.index = data["index"]
+        self.categories = data["category"]
+
+    def retrieve(self, query, query_modality, target_modality, top_k=5):
+        query_proj = F.normalize(query, dim=-1).cpu().numpy()
+        similarities = np.dot(self.embeddings[target_modality], query_proj.T).squeeze()
+        indices = np.argsort(-similarities)[:top_k]  # Get top-k indices
+        
+        # Retrieve corresponding samples from target modality
+        retrieved_idx = [self.index[i].item() for i in indices]
+        mesh_ids = self.dataframe.iloc[retrieved_idx]['fullId']
+        results = self.embeddings[target_modality][indices]
+        return retrieved_idx, mesh_ids, results
