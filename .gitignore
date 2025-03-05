@@ -7,4 +7,4 @@
 *.png
 /PretrainedModels/*
 /Embeddings/*
-/TrainedModels
+/TrainedModels/*
