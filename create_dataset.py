@@ -77,8 +77,8 @@ def create_subset_by_random_sampling(num_cat_sample = 20, meshes_per_cat = 10):
         _type_: Dataset with (num_cat_sample*meshes_per_cat) rows
     """
 
-    metadata_df = pd.read_csv('../Data/ShapeNetSem/Files/metadata.csv')
-    categories_df = pd.read_csv('../Data/ShapeNetSem/Files/categories.synset.csv')
+    metadata_df = pd.read_csv('Data/ShapeNetSem/Files/metadata.csv')
+    categories_df = pd.read_csv('Data/ShapeNetSem/Files/categories.synset.csv')
 
     remaining_categories = categories_df['category'].to_list()
     sampled_categories = []
@@ -278,5 +278,5 @@ def create_snapshots_for_dataset(dataset_path, mesh_dir, img_dir, num_views):
             print(e)
             continue
 
-    print(f'Snapshots succesfull for {dataset.shape[0] - no_errors} meshes and errors for {no_errors} meshes')
+    print(f'Snapshots successfull for {dataset.shape[0] - no_errors} meshes and errors for {no_errors} meshes')
     print(f'Meshes that errored out are: {errored_meshes}')
