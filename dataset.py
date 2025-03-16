@@ -38,7 +38,7 @@ class CLIPTextModalityDataset(Dataset):
         # Tokenize using OpenCLIP tokenizer (returns a tensor)
         tokenized_text = self.tokenizer([text_prompt])  # Shape: [1, 77]
 
-        return idx, tokenized_text.squeeze(0), text_prompt
+        return idx, mesh_id, tokenized_text.squeeze(0)
 
 class Dinov2ImageModalityDataset(Dataset):
     """Creates image modality dataset for ShapeNetSem with Dinov2 image preprocessing
@@ -145,7 +145,7 @@ class PCModalityDataset(Dataset):
     
         indices = np.random.choice(point_cloud.shape[0], self.num_points, replace=False)
         
-        return idx, torch.from_numpy(point_cloud[indices])
+        return idx, mesh_id, torch.from_numpy(point_cloud[indices])
     
 class AlignedModalityDataset(Dataset):
     """Creates a paired modality dataset that returns text prompt, image and 3D mesh using index
@@ -217,3 +217,108 @@ class AlignedModalityDataset(Dataset):
         indices = np.random.choice(point_cloud.shape[0], self.num_points, replace=False)
         
         return idx, tokenized_text.squeeze(0), image_tensor, torch.from_numpy(point_cloud[indices])
+    
+class RAGDataset(Dataset):
+    def __init__(self, data_dict, dataset_path, pc_dir, num_points=1024):
+        """
+        Initialize the dataset with data from the dictionary.
+        
+        :param data_dict: Dictionary containing the projections and other data
+        """
+        self.data_dict = data_dict
+        self.all_idx = data_dict['index']  # This is a tensor
+        self.text_proj = data_dict["text_proj"]
+        self.img_proj = data_dict["img_proj"]
+        self.pc_proj = data_dict["pc_proj"]
+
+        self.pc_dir = pc_dir
+        self.dataframe = pd.read_csv(dataset_path)
+        self.num_points = num_points
+
+    def __len__(self):
+        """
+        Returns the total number of samples.
+        """
+        return len(self.all_idx)
+
+    def __getitem__(self, idx):
+        """
+        Fetches a sample at a specific index.
+        
+        :param idx: Sample index (provided when accessing the dataset)
+        :return: A dictionary with the selected data (text, image, pc projection)
+        """
+
+        # Use the idx to retrieve data from the tensor of indices
+        selected_idx = self.all_idx[idx]  # This is still a tensor, but works for indexing
+        # print(idx, selected_idx)
+        # Get corresponding projections and category using the selected idx
+        text_projection = self.text_proj[selected_idx]
+        img_projection = self.img_proj[selected_idx]
+        pc_projection = self.pc_proj[selected_idx]
+        category1 = self.data_dict['category'][selected_idx]
+        #print(category1)
+        # Getting true point cloud
+        mesh_id = self.dataframe.loc[selected_idx, 'fullId']
+        category = self.dataframe.loc[selected_idx, 'category']
+        # print(category, category1)
+        pc_path = f'{self.pc_dir}{mesh_id}.npy'
+        true_pc = np.load(pc_path)
+        indices = np.random.choice(true_pc.shape[0], self.num_points, replace=False)
+        # Sample the selected points
+        true_pc = torch.from_numpy(true_pc[indices])
+        # Returning the selected data as a dictionary
+        return {
+            "text_proj": text_projection,
+            "img_proj": img_projection,
+            "pc_proj": pc_projection,
+            "index": selected_idx,
+            "category": category,
+            "target_pc": true_pc
+        }
+
+class ChoiceEmbeddingDataset(Dataset):
+    """Creates a paired modality dataset that returns text image and pc embedding (from pretrained encoders)
+
+    Args:
+        Dataset (_type_): _description_
+    """
+    def __init__(self, dataset_path, embd_dir):
+        super().__init__()
+        # For Text
+        self.dataframe = pd.read_csv(dataset_path)
+        self.embed_dir = embd_dir
+        """ 
+        data_dict = {
+            "mesh_id": all_text_emb,
+            "text_emb": [3, 768],
+            "img_emb": [4, 384],
+            "pc_emb": [8, 768],
+        }
+        """
+    
+    def __len__(self):
+        return len(self.dataframe)
+    
+    def __getitem__(self, idx):
+        """
+        Returns:
+            idx (int): Index
+            tokenized_text (torch.Tensor): Tokenized text for CLIP (B, 77)
+            image_tensor (torch.Tensor): preprocessed image for Dinov2 (B, 3, 518, 518)
+            point_cloud (torch.Tensor): point cloud of mesh (B, 1024, 3)
+        """
+        mesh_id = self.dataframe.loc[idx, 'fullId']
+        dict_path = os.path.join(self.embed_dir, f'{mesh_id}.pt')
+        data_dict = torch.load(dict_path)
+        # Retrieve the corresponding embedding using the index
+        text_embedding = data_dict['text_emb']
+        img_embedding = data_dict['img_emb']
+        pc_embedding = data_dict['pc_emb']
+
+        text_index = random.randint(0, text_embedding.shape[0] - 1)
+        img_index = random.randint(0, img_embedding.shape[0] - 1)
+        pc_index = random.randint(0, pc_embedding.shape[0] - 1)
+
+        # Now return the embedding (and other data if needed)
+        return idx, text_embedding[text_index], img_embedding[img_index], pc_embedding[pc_index]
