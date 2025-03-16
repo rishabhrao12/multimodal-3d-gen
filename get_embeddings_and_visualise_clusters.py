@@ -22,7 +22,7 @@ def get_tsne(pca_result):
     print(f"After TSNE embedding shape: {tsne_result.shape}")
     return tsne_result
 
-def plot_tsne(tsne_result, labels, cat_mapping, modality):
+def plot_tsne(tsne_result, labels, cat_mapping, modality, exp_name):
     plot_data = pd.DataFrame({
         'x': tsne_result[:, 0],
         'y': tsne_result[:, 1],
@@ -37,24 +37,28 @@ def plot_tsne(tsne_result, labels, cat_mapping, modality):
         title=f"Interactive t-SNE Visualization with Category Info for {modality}"
     )
 
-    save_path = f"align_{modality}_clusters.png"
+    save_path = f"{exp_name}_align_{modality}_clusters.png"
     fig.write_image(save_path)
 
 if __name__ == "__main__":
+    checkpoint_path = "TrainedModels/ALIGN/Baseline/150.pth"
+    dataset_path = "Data/ShapeNetSem/Datasets/subset_template_200.csv"
+    image_dir = "Data/ShapeNetSem/Images/subset_200"
+    pc_dir = "Data/ProcessedData/PointClouds"
+    exp_name = "train"
+    save_path = f"Embeddings/ALIGN/subset_template_rag.pt"
+    num_dataset_samples = 200
     try:
         dinov2_encoder = load_dinov2()
         clip_encoder = load_clip()
-        pclip_encoder = load_point_clip()
         dinov2_encoder.eval()
         clip_encoder.eval()
-        pclip_encoder.eval()
         print('All Models loaded succesfully and set to eval mode')
 
         # Initialize the model
         align_model = AlignEncoder(400)  # Ensure the architecture matches
 
         # Load the saved weights
-        checkpoint_path = "TrainedModels/Baseline/150.pth"
         state_dict = torch.load(checkpoint_path, map_location=torch.device('cpu'))  # Load to CPU
 
         # Apply the weights to the model
@@ -68,10 +72,6 @@ if __name__ == "__main__":
         print("Align Model weights loaded successfully and model set to eval")
     except:
         print('Error in Loading Models')
-    
-    dataset_path = "Data/ShapeNetSem/Datasets/subset_template_200.csv"
-    image_dir = "Data/ShapeNetSem/Images/subset_200"
-    pc_dir = "Data/ProcessedData/PointClouds"
 
     # Set up CLIP preprocessing
     preprocess = image_transform(
@@ -80,8 +80,8 @@ if __name__ == "__main__":
     )
 
     dataset = AlignedModalityDataset(dataset_path, image_dir, pc_dir)
-    dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
-    dataset_path = "Data/ShapeNetSem/Datasets/subset_template_200.csv"
+
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
     data = pd.read_csv(dataset_path)
 
     all_text_projections, all_image_projections, all_pc_projections  = [], [], []
@@ -108,15 +108,18 @@ if __name__ == "__main__":
 
             text_emb = clip_encoder.encode_text(tokenized_text) # (B, 768)
             img_emb = dinov2_encoder(image_tensor) # (B, 384)
-            pc_emb = pclip_encoder.encode_image(depth_maps) # (B, 768)
+            pc_emb = clip_encoder.encode_image(depth_maps) # (B, 768)
             text_proj, img_proj, pc_proj = align_model(text_emb, img_emb, pc_emb)
 
             all_text_projections.append(text_proj)
             all_image_projections.append(img_proj)
             all_pc_projections.append(pc_proj)
-            all_idx.append(idx)
+            all_idx.append(idx.item())
 
             all_cats.append(data.loc[int(idx.item()), 'category'])
+
+            if i == num_dataset_samples - 1:
+                break
 
     end_time = time.time()
     print(f"Model took {readable_time(start_time, end_time)} to train")
@@ -138,7 +141,6 @@ if __name__ == "__main__":
         "category": all_cats
     }
 
-    save_path = "Embeddings/ALIGN/subset_template_200.pt"
     torch.save(data_dict, save_path)
 
     projections_t = projections_t.numpy()
@@ -173,7 +175,7 @@ if __name__ == "__main__":
     tsne_pc = get_tsne(pca_pc)
     print('TSNE Completed')
 
-    plot_tsne(tsne_t, labels, cat_mapping, "text")
-    plot_tsne(tsne_i, labels, cat_mapping, "image")
-    plot_tsne(tsne_pc, labels, cat_mapping, "pc")
+    plot_tsne(tsne_t, labels, cat_mapping, "text", exp_name)
+    plot_tsne(tsne_i, labels, cat_mapping, "image", exp_name)
+    plot_tsne(tsne_pc, labels, cat_mapping, "pc", exp_name)
     print("Plotting Completed")
