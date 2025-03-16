@@ -12,6 +12,8 @@ from torch.utils.data import DataLoader
 from dataset import AlignedModalityDataset
 from open_clip import image_transform
 import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 def readable_time(start_time, end_time):
     elapsed_time = end_time - start_time
@@ -96,3 +98,36 @@ def point_cloud_to_depth_map(pc_data):
     depth_image = Image.fromarray((depth_np * 255).astype(np.uint8))
 
     return depth_image
+
+def get_plot(ref_pc):
+    predicted_scatter = go.Scatter3d(
+        x=ref_pc[:, 0],
+        y=ref_pc[:, 1],
+        z=ref_pc[:, 2],
+        mode='markers',
+        marker=dict(size=5, color='blue'),
+        name="Predicted"
+    )
+
+    # Create the subplots: 1 row, 2 columns
+    fig = make_subplots(
+        rows=1, cols=1,
+        subplot_titles=("Predicted Point Cloud"),
+        specs=[[{'type': 'scatter3d'}]]
+    )
+
+    # Add the scatter plots to the subplots
+    fig.add_trace(predicted_scatter, row=1, col=1)
+
+    # Update layout with axis titles and a main title
+    fig.update_layout(
+        title=f"Predicted",
+        scene=dict(
+            xaxis_title="X",
+            yaxis_title="Y",
+            zaxis_title="Z"
+        ),
+        showlegend=True
+    )
+
+    return fig
