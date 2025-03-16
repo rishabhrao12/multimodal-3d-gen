@@ -1,5 +1,8 @@
 import torch
 import torch.nn as nn
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import numpy as np
 
 def chamfer_distance(pc1, pc2):
     """
@@ -41,3 +44,18 @@ class RAGDecoder(nn.Module):
         x = self.fc2(x)
         x = self.fc3(x)
         return x.view(-1, self.num_points, 3)
+    
+def load_rag(checkpoint_path="TrainedModels/RAG/four_hidden/2000.pth"):
+    num_points = 1024  # Number of points in the point cloud
+    in_dim = 400 + num_points * 3  # Input dimension (projection + flattened point cloud)
+    hidden_dim = 512  # Hidden layer size
+    out_dim = num_points * 3
+    num_hidden_layers = 4
+    rag_decoder = RAGDecoder(in_dim, hidden_dim, out_dim, num_hidden_layers=4)
+    state_dict = torch.load(checkpoint_path, map_location=torch.device('cpu'))  # Load to CPU
+    # Apply the weights to the model
+    rag_decoder.load_state_dict(state_dict)
+    # Set to evaluation mode (if needed)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    rag_decoder.to(device)
+    return rag_decoder
