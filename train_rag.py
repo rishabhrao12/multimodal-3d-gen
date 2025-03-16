@@ -7,7 +7,7 @@ import time
 
 if __name__ == "__main__":
     dataset_path = "Data/ShapeNetSem/Datasets/subset_template_200.csv"
-    embed_path = "Embeddings/ALIGN/subset_template_200.pt"
+    embed_path = "Embeddings/ALIGN/subset_template_rag.pt"
     pc_dir = "Data/ProcessedData/PointClouds/"
     save_dir = f"TrainedModels/RAG/four_hidden/"
     os.makedirs(save_dir, exist_ok=True)
@@ -17,7 +17,7 @@ if __name__ == "__main__":
     hidden_dim = 512  # Hidden layer size
     out_dim = num_points * 3  # Output dimension (for point cloud with 3 coordinates per point)
     batch_size = 8
-    epochs = 4000
+    epochs = 1500
 
     cmr = CrossModalRetrival(dataset_path, embed_path)
 
@@ -51,10 +51,13 @@ if __name__ == "__main__":
                 projections.append(projection)
                 point_clouds.append(pc)
 
+            #print(f"Point Cloud Input Shape: {point_clouds[0].shape} {len(point_clouds)}, Projections Shape: {projections[0].shape} {len(projections)}")
             point_clouds = torch.stack(point_clouds) # (B, num_points, 3)
             projections = torch.stack(projections) # (B, 1, 400)
+            #print(f"After stack Point Cloud Input Shape: {point_clouds.shape}, Projections Shape: {projections.shape}")
             point_clouds = point_clouds.view(batch_size, -1)
             projections = projections.squeeze(1)
+            #print(f"After squeeze/view Point Cloud Input Shape: {point_clouds.shape}, Projections Shape: {projections.shape}")
             combined_input = torch.concat((projections, point_clouds), dim=1)
             combined_input = combined_input.to(dtype=torch.float32)
             pred_point_clouds = rag_decoder(combined_input)
@@ -67,7 +70,7 @@ if __name__ == "__main__":
 
             optimizer.zero_grad()
             loss.backward()
-
+            #break
             """
             for param in rag_decoder.parameters():
                 if param.grad is None:
@@ -79,7 +82,7 @@ if __name__ == "__main__":
             optimizer.step()
             epoch_losses.append(loss.item())
             
-        
+        #break
         avg_epoch_loss = sum(epoch_losses)/len(epoch_losses)
         all_losses.append(avg_epoch_loss)
         epoch_end = time.time()
@@ -97,4 +100,4 @@ if __name__ == "__main__":
     epoch_losses_np = np.array(all_losses)
     loss_path = f"{save_dir}loss.npy"
     #print(loss_path)
-    np.save(f"{save_dir}loss.npy", epoch_losses_np)
+    #np.save(f"{save_dir}loss.npy", epoch_losses_np)
