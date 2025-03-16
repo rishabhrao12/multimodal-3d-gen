@@ -4,6 +4,7 @@ import torch.nn as nn
 import pandas as pd
 import numpy as np
 from utils import *
+from rag import *
 
 class NTXentLoss(torch.nn.Module):
     def __init__(self, temperature=0.07):
@@ -68,6 +69,36 @@ class AlignEncoder(nn.Module):
 
         return text_proj, img_proj, pc_proj
 
+
+class ComplexMLP(nn.Module):
+    def __init__(self, in_dim, out_dim, dropout_rate=0.2):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(in_dim, 2*in_dim),
+                #nn.BatchNorm1d(2*in_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout_rate),  # Dropout layer after ReLU activation
+                nn.Linear(2*in_dim, out_dim)
+            )
+
+    def forward(self, x):
+        out = self.net(x)
+        return out
+
+class ComplexAlignEncoder(nn.Module):
+    def __init__(self, embed_dim, dropout_rate):
+        super().__init__()
+        self.text_proj_head = ComplexMLP(768, embed_dim, dropout_rate)
+        self.img_proj_head = ComplexMLP(384, embed_dim, dropout_rate)
+        self.pc_proj_head = ComplexMLP(768, embed_dim, dropout_rate)
+    
+    def forward(self, text, img, pc):
+        text_proj = self.text_proj_head(text)
+        img_proj = self.img_proj_head(img)
+        pc_proj = self.pc_proj_head(pc)
+
+        return text_proj, img_proj, pc_proj
+    
 def load_alignment(checkpoint_path, align_embd):
     align_model = AlignEncoder(align_embd)  # Ensure the architecture matches
     state_dict = torch.load(checkpoint_path, map_location=torch.device('cpu'))  # Load to CPU
@@ -76,6 +107,7 @@ def load_alignment(checkpoint_path, align_embd):
     # Set to evaluation mode (if needed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     align_model.to(device)
+    print('ALIGN Model Loaded Successfully!')
     return align_model
     
 class CrossModalRetrival:
@@ -103,7 +135,10 @@ class CrossModalRetrival:
         indices = np.argsort(-similarities)[:top_k]  # Get top-k indices
         
         # Retrieve corresponding samples from target modality
-        retrieved_idx = [self.index[i].item() for i in indices]
+        if isinstance(self.index[0],int):
+            retrieved_idx = [self.index[i] for i in indices]
+        else:
+            retrieved_idx = [self.index[i].item() for i in indices]
         mesh_ids = self.dataframe.iloc[retrieved_idx]['fullId']
         results = self.embeddings[target_modality][indices]
         return retrieved_idx, mesh_ids, results
@@ -169,8 +204,8 @@ class EncodeUserInput(nn.Module):
             self.clip_encoder.eval()
             self.pclip_encoder.eval()
             self.align_model.eval()
-        except:
-            print('Error in Loading Models')
+        except Exception as e:
+            print(f'Error in Loading Models {e}')
     
     def get_projection(self, prompt, modality):
         preprocessed_prompt = self.preprocess_input(prompt, modality)
@@ -188,7 +223,7 @@ class EncodeUserInput(nn.Module):
 
         return projection
 
-def get_aligned_output(dataset_path, img_dir, pc_dir, prompt, input_modality, output_modality, encoder, cmr):
+def get_aligned_output_from_user_prompt(dataset_path, img_dir, mesh_dir, prompt, input_modality, output_modality, encoder, cmr):
     df = pd.read_csv(dataset_path)
     projection = encoder.get_projection(prompt, input_modality)
     idx, mesh_ids, arrays = cmr.retrieve(projection, input_modality, output_modality, top_k=5)
@@ -198,6 +233,40 @@ def get_aligned_output(dataset_path, img_dir, pc_dir, prompt, input_modality, ou
     elif output_modality == "img":
         output = f'{img_dir}{mesh_ids[idx[1]]}/view0.png'
     else:
-        output = f'{pc_dir}{mesh_ids[idx[1]]}.obj'
+        output = f'{mesh_dir}{mesh_ids[idx[1]]}.obj'
     
     return output
+
+def get_aligned_pc_from_user_prompt(pc_dir, prompt, input_modality, encoder, cmr):
+    projection = encoder.get_projection(prompt, input_modality)
+    idx, mesh_ids, arrays = cmr.retrieve(projection, input_modality, 'pc', top_k=5)
+    pc_path = f'{pc_dir}{mesh_ids[idx[0]]}.npy'
+    pc_data = np.load(pc_path)
+    num_points = 1024
+    indices = np.random.choice(pc_data.shape[0], num_points, replace=False)
+    # Sample the selected points
+    output = pc_data[indices]
+
+    return projection, torch.from_numpy(output)
+
+def get_aligned_pc_from_projection(pc_dir, projection, input_modality, cmr):
+    idx, mesh_ids, arrays = cmr.retrieve(projection, input_modality, 'pc', top_k=5)
+    pc_path = f'{pc_dir}{mesh_ids[idx[1]]}.npy'
+    pc_data = np.load(pc_path)
+    num_points = 1024
+    indices = np.random.choice(pc_data.shape[0], num_points, replace=False)
+    # Sample the selected points
+    output = pc_data[indices]
+
+    return torch.from_numpy(output)
+
+def generate_pc_from_user_prompt(pc_dir, prompt, modality, enc, cmr, rag_decoder):
+    projection, ref_pc = get_aligned_pc_from_user_prompt(pc_dir, prompt, modality, enc, cmr)
+    pc = ref_pc.view(-1)
+    pc = pc.unsqueeze(0)
+    combined_input = torch.concat((projection, pc), dim=1)
+    with torch.no_grad():
+        pred_pc = rag_decoder(combined_input.to(dtype=torch.float32))
+    pred_pc = pred_pc.squeeze(0)
+    plot = get_plot(pred_pc)
+    return plot
