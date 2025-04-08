@@ -8,6 +8,55 @@ from sklearn.manifold import TSNE
 import plotly.express as px
 import numpy as np
 
+def get_dmaps(point_cloud, batch_size):
+    depth_maps_batch = []
+
+    for i in range(batch_size):
+        # Get all depth maps (PIL images) for each point cloud
+        depth_maps = get_all_canonical_dmaps(point_cloud[i])  # Returns list of 6 PIL Images
+
+        # Preprocess each depth map (e.g., Resize, ToTensor, Normalize, etc.)
+        preprocessed_maps = [preprocess(dmap).unsqueeze(0) for dmap in depth_maps]  # Each is (1, 3, H, W)
+
+        # Stack them into (Views, 3, H, W)
+        preprocessed_maps = torch.cat(preprocessed_maps, dim=0)  # Shape: (Views, 3, H, W)
+
+        # Append to batch list
+        depth_maps_batch.append(preprocessed_maps)
+
+    # Final batch tensor shape: (Batch, Views, 3, H, W)
+    depth_maps_batch = torch.stack(depth_maps_batch, dim=0)
+    return depth_maps_batch
+
+def encode_and_aggregate_views(depth_maps_batch, pointclip_model):
+    """
+    Encodes depth maps for all views and aggregates them for each point cloud in the batch.
+
+    Args:
+        depth_maps_batch (torch.Tensor): Tensor of shape (B, V, 3, 224, 224)
+        pointclip_model (nn.Module): Pretrained PointCLIP model
+        aggregation (str): "mean" or "max"
+        device (str): Device to run on
+    
+    Returns:
+        torch.Tensor: Aggregated embeddings of shape (B, Embed)
+    """
+    B, V, C, H, W = depth_maps_batch.shape
+
+    # Flatten batch and view dimensions to feed into the encoder
+    flattened_dmaps = depth_maps_batch.view(B * V, C, H, W).to(device)
+
+    with torch.no_grad():
+        # Encode all images at once: shape (B * V, Embed)
+        encoded_views = pointclip_model.encode_image(flattened_dmaps)
+
+    # Reshape back to (B, V, Embed)
+    encoded_views = encoded_views.view(B, V, -1)
+
+    aggregated_embeddings = encoded_views.mean(dim=1)
+
+    return aggregated_embeddings
+
 def get_pca(embeddings):
     print(f"Before PCA embedding shape: {embeddings.shape}")
     pca = PCA(n_components=150, random_state=42)
@@ -41,13 +90,14 @@ def plot_tsne(tsne_result, labels, cat_mapping, modality, exp_name):
     fig.write_image(save_path)
 
 if __name__ == "__main__":
-    checkpoint_path = "TrainedModels/ALIGN/subset_200_direct_new_loss_fixed/140.pth" # "TrainedModels/ALIGN/Baseline/150.pth"
-    dataset_path = "Data/ShapeNetSem/Datasets/subset_template_200.csv"
-    image_dir = "Data/ShapeNetSem/Images/subset_200"
-    pc_dir = "Data/ProcessedData/PointClouds"
-    exp_name = "direct"
-    save_path = f"Embeddings/ALIGN/subset_template_new_loss_fixed.pt"
-    num_dataset_samples = 200
+    checkpoint_path = "TrainedModels/ALIGN/final_template_30cat_fixed/100.pth"# "TrainedModels/ALIGN/final_template_30cat_fixed/100.pth" #"TrainedModels/ALIGN/subset_200_direct_new_loss_fixed_all/140.pth"
+    # dataset_path = "Data/ShapeNetSem/Datasets/final_template_30cat.csv"
+    dataset_path = "Data/ShapeNetSem/Datasets/final_template_30cat_test.csv"
+    image_dir = "Data/ShapeNetSem/Images/final_template_30cat"
+    pc_dir = "Data/ProcessedData/final_template_30cat_pc"
+    exp_name = "Clusters/30cat_test"
+    save_path = f"Embeddings/ALIGN/final_template_30cat_test.pt" #f"Embeddings/ALIGN/final_template_30cat_fixed.pt"
+    num_dataset_samples = 1500
     try:
         dinov2_encoder = load_dinov2()
         clip_encoder = load_clip()
@@ -56,7 +106,7 @@ if __name__ == "__main__":
         print('All Models loaded succesfully and set to eval mode')
 
         # Initialize the model
-        align_model = AlignEncoder(400)  # Ensure the architecture matches
+        align_model = ComplexAlignEncoder(400, dropout_rate=0.2)  # Ensure the architecture matches
 
         # Load the saved weights
         state_dict = torch.load(checkpoint_path, map_location=torch.device('cpu'))  # Load to CPU
@@ -101,14 +151,19 @@ if __name__ == "__main__":
             batch_size = point_cloud.shape[0]
 
             # Convert each point cloud to a depth map and preprocess it
-            depth_maps = [preprocess(point_cloud_to_depth_map(point_cloud[i])).unsqueeze(0) for i in range(batch_size)]
             #depth_maps = [preprocess(inference_dmap_random_view(point_cloud[i])).unsqueeze(0) for i in range(batch_size)]
+            depth_maps = get_dmaps(point_cloud, batch_size)
             # Stack depth maps into a single batch tensor
-            depth_maps = torch.cat(depth_maps, dim=0).to(device)  # Shape: [batch_size, 3, H, W]
+            # depth_maps = torch.cat(depth_maps, dim=0).to(device)  # Shape: [batch_size, 3, H, W]
+            #print(depth_maps.shape)
             
+            #print(tokenized_text.shape, image_tensor.shape, depth_maps.shape)
             text_emb = clip_encoder.encode_text(tokenized_text) # (B, 768)
             img_emb = dinov2_encoder(image_tensor) # (B, 384)
-            pc_emb = clip_encoder.encode_image(depth_maps) # (B, 768)
+            # pc_emb = clip_encoder.encode_image(depth_maps) # (B, 768)
+            pc_emb = encode_and_aggregate_views(depth_maps, clip_encoder)
+            #print(text_emb.shape, img_emb.shape, pc_emb.shape)
+            
             text_proj, img_proj, pc_proj = align_model(text_emb, img_emb, pc_emb)
 
             all_text_projections.append(text_proj)
@@ -117,7 +172,7 @@ if __name__ == "__main__":
             all_idx.append(idx.item())
 
             all_cats.append(data.loc[int(idx.item()), 'category'])
-
+            print(f"{i} complete")
             if i == num_dataset_samples - 1:
                 break
     #"""

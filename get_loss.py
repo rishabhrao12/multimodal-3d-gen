@@ -12,19 +12,19 @@ if __name__ == "__main__":
     try:
         dinov2_encoder = load_dinov2()
         clip_encoder = load_clip()
+        pclip_encoder = load_point_clip()
         dinov2_encoder.eval()
         clip_encoder.eval()
+        pclip_encoder.eval()
         print('All Models loaded succesfully and set to eval mode')
     except:
         print('Error in Loading Models')
 
-    epochs = 100
-
-    dataset_path = "Data/ShapeNetSem/Datasets/baseline_400.csv"
-    image_dir = "Data/ShapeNetSem/Images/baseline_400"
-    pc_dir = "Data/ProcessedData/baseline_400"
-    save_dir = "TrainedModels/ALIGN/baseline_400"
-    save_interval = 20
+    dataset_path = "Data/ShapeNetSem/Datasets/subset_template_200.csv"
+    image_dir = "Data/ShapeNetSem/Images/subset_200"
+    pc_dir = "Data/ProcessedData/PointClouds"
+    #save_dir = "TrainedModels/ALIGN/final_template_1k/"
+    save_interval = 5
 
     # Set up CLIP preprocessing
     preprocess = image_transform(
@@ -36,19 +36,16 @@ if __name__ == "__main__":
     dataloader = DataLoader(dataset, batch_size=8, shuffle=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
-    align_model = AlignEncoder(400)  # Ensure the architecture matches
+    align_model = load_alignment(checkpoint_path="TrainedModels/ALIGN/Baseline/150.pth", align_embd=400)  # Ensure the architecture matches
     align_model.to(device)
 
     loss_fn = NTXentLoss(temperature=0.07)
-    optimizer = torch.optim.Adam(align_model.parameters(), lr=1e-4)
 
     all_losses = []
 
-    start_time = time.time()
-    for epoch in range(epochs + 1):
-        epoch_losses = []
-        align_model.train()
-        epoch_start = time.time()
+    epoch_losses = []
+    align_model.eval()
+    with torch.no_grad():
         for i, batch in enumerate(dataloader):
             idx, tokenized_text, image_tensor, point_cloud = batch
             tokenized_text = tokenized_text.to(device) # (B, 77)
@@ -71,7 +68,7 @@ if __name__ == "__main__":
             with torch.no_grad():
                 text_emb = clip_encoder.encode_text(tokenized_text) # (B, 768)
                 img_emb = dinov2_encoder(image_tensor) # (B, 384)
-                pc_emb = clip_encoder.encode_image(depth_maps) # (B, 768)
+                pc_emb = pclip_encoder.encode_image(depth_maps) # (B, 768)
 
             #print(text_emb.shape, img_emb.shape, pc_emb.shape)
             text_proj, img_proj, pc_proj = align_model(text_emb, img_emb, pc_emb)
@@ -82,23 +79,7 @@ if __name__ == "__main__":
 
             #print('Loss: ', loss_text_point, loss_text_image, loss_image_point)
             avg_loss = (loss_text_point + loss_text_image + loss_image_point) / 3
-            optimizer.zero_grad()
-            avg_loss.backward()
-            optimizer.step()
             epoch_losses.append(avg_loss.item())
 
-        avg_epoch_loss = sum(epoch_losses)/len(epoch_losses)
-        all_losses.append(avg_epoch_loss)
-        epoch_end = time.time()
-        if epoch % save_interval == 0:
-            model_path = f"{save_dir}{epoch}.pth"
-            torch.save(align_model.state_dict(), model_path)
-
-        print(f'Epoch {epoch} loss: {avg_epoch_loss}, time taken: {readable_time(epoch_start, epoch_end)}')
-
-        
-
-    end_time = time.time()
-    print(f"Model trained for {epochs} and took {readable_time(start_time, end_time)} to train")
-    epoch_losses_np = np.array(all_losses)
-    np.save(f'{save_dir}loss.npy', epoch_losses_np)
+    avg_epoch_loss = sum(epoch_losses)/len(epoch_losses)
+    print(avg_epoch_loss)

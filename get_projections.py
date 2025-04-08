@@ -7,6 +7,8 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn.manifold import TSNE
 import plotly.express as px
 import numpy as np
+from dataset import ChoiceEmbeddingDataset
+import os
 
 def get_pca(embeddings):
     print(f"Before PCA embedding shape: {embeddings.shape}")
@@ -41,98 +43,80 @@ def plot_tsne(tsne_result, labels, cat_mapping, modality, exp_name):
     fig.write_image(save_path)
 
 if __name__ == "__main__":
-    checkpoint_path = "TrainedModels/ALIGN/subset_200_direct_new_loss_fixed/140.pth" # "TrainedModels/ALIGN/Baseline/150.pth"
-    dataset_path = "Data/ShapeNetSem/Datasets/subset_template_200.csv"
-    image_dir = "Data/ShapeNetSem/Images/subset_200"
-    pc_dir = "Data/ProcessedData/PointClouds"
-    exp_name = "direct"
-    save_path = f"Embeddings/ALIGN/subset_template_new_loss_fixed.pt"
-    num_dataset_samples = 200
+    train_dataset_path = "Data/ShapeNetSem/Datasets/final_template_20cat_train.csv"
+    val_dataset_path = "Data/ShapeNetSem/Datasets/final_template_20cat_val.csv"
+    test_dataset_path = "Data/ShapeNetSem/Datasets/final_template_20cat_test.csv"
+    embd_dir = "Embeddings/PRETRAINED/final_template_30cat"
+
+    image_dir = "Data/ShapeNetSem/Images/final_template_30cat"
+    pc_dir = "Data/ProcessedData/final_template_30cat"
+    checkpoint_path = "TrainedModels/ALIGN/final_template_20cat/250.pth"
+    num_dataset_samples = 800
+    exp = "train"
+    save_path = f"Embeddings/ALIGN/final_template_20cat/"
+    os.makedirs(save_path, exist_ok=True)
+
     try:
-        dinov2_encoder = load_dinov2()
-        clip_encoder = load_clip()
-        dinov2_encoder.eval()
-        clip_encoder.eval()
-        print('All Models loaded succesfully and set to eval mode')
-
         # Initialize the model
-        align_model = AlignEncoder(400)  # Ensure the architecture matches
-
+        align_model = AlignEncoder(embed_dim=400)  
         # Load the saved weights
         state_dict = torch.load(checkpoint_path, map_location=torch.device('cpu'))  # Load to CPU
-
         # Apply the weights to the model
         align_model.load_state_dict(state_dict)
-
         # Set to evaluation mode (if needed)
         align_model.eval()
         device = "cuda" if torch.cuda.is_available() else "cpu"
         align_model.to(device)
 
         print("Align Model weights loaded successfully and model set to eval")
-    except:
-        print('Error in Loading Models')
+    except Exception as e:
+        print(f'Error in Loading Models \n {e}')
 
-    # Set up CLIP preprocessing
-    preprocess = image_transform(
-        clip_encoder.visual.image_size,  # Correct image size for CLIP
-        is_train=False  # Ensures we use inference preprocessing
-    )
 
-    dataset = AlignedModalityDataset(dataset_path, image_dir, pc_dir)
+    train_dataset = ChoiceEmbeddingDataset(train_dataset_path, embd_dir)
+    val_dataset = ChoiceEmbeddingDataset(val_dataset_path, embd_dir)
+    test_dataset = ChoiceEmbeddingDataset(test_dataset_path, embd_dir)
 
-    dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
-    data = pd.read_csv(dataset_path)
+    train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=1, shuffle=True)
+    test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
-    all_text_projections, all_image_projections, all_pc_projections  = [], [], []
-    all_idx = []
-    all_cats = []
-
+    all_text_projections, all_image_projections, all_pc_projections, all_cats, all_idx = [], [], [], [], []
     start_time = time.time()
+
+    dataset_path = "Data/ShapeNetSem/Datasets/final_template_20cat.csv"
+    data = pd.read_csv(dataset_path)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
     with torch.no_grad():
-        for i, batch in enumerate(dataloader):
-            idx, tokenized_text, image_tensor, point_cloud = batch
-            tokenized_text = tokenized_text.to(device) # (B, 77)
-            image_tensor = image_tensor.to(device) # (B, 3, 518, 518)
-
-            point_cloud = point_cloud.to(device) # (B, 1024, 3)
-
-            # Assuming point_cloud is a batch of point clouds (shape: [batch_size, N, 3])
-            batch_size = point_cloud.shape[0]
-
-            # Convert each point cloud to a depth map and preprocess it
-            depth_maps = [preprocess(point_cloud_to_depth_map(point_cloud[i])).unsqueeze(0) for i in range(batch_size)]
-            #depth_maps = [preprocess(inference_dmap_random_view(point_cloud[i])).unsqueeze(0) for i in range(batch_size)]
-            # Stack depth maps into a single batch tensor
-            depth_maps = torch.cat(depth_maps, dim=0).to(device)  # Shape: [batch_size, 3, H, W]
-            
-            text_emb = clip_encoder.encode_text(tokenized_text) # (B, 768)
-            img_emb = dinov2_encoder(image_tensor) # (B, 384)
-            pc_emb = clip_encoder.encode_image(depth_maps) # (B, 768)
+        for i, batch in enumerate(train_dataloader):
+            idx, text_emb, img_emb, pc_emb = batch
+            text_emb = text_emb.to(device) # (B, 77)
+            img_emb = img_emb.to(device) # (B, 3, 518, 518)
+            pc_emb = pc_emb.to(device) # (B, 1024, 3)
             text_proj, img_proj, pc_proj = align_model(text_emb, img_emb, pc_emb)
 
             all_text_projections.append(text_proj)
             all_image_projections.append(img_proj)
             all_pc_projections.append(pc_proj)
-            all_idx.append(idx.item())
 
             all_cats.append(data.loc[int(idx.item()), 'category'])
-
+            all_idx.append(idx)
             if i == num_dataset_samples - 1:
                 break
-    #"""
+
     end_time = time.time()
     print(f"Model took {readable_time(start_time, end_time)} to train")
 
     print(len(all_text_projections), len(all_image_projections), len(all_pc_projections))   
     print(all_text_projections[0].shape, all_image_projections[0].shape, all_pc_projections[0].shape)
-
+    
+    
     projections_t = torch.concat(all_text_projections, dim=0)
     projections_i = torch.concat(all_image_projections, dim=0)
     projections_pc = torch.concat(all_pc_projections, dim=0)
 
     print(projections_t.shape, projections_i.shape, projections_pc.shape)
-
     data_dict = {
         "text_proj": projections_t,
         "img_proj": projections_i,
@@ -141,21 +125,17 @@ if __name__ == "__main__":
         "category": all_cats
     }
 
-    torch.save(data_dict, save_path)
+    #torch.save(data_dict, save_path)
 
+    #"""
     projections_t = projections_t.numpy()
     projections_i = projections_i.numpy()
     projections_pc = projections_pc.numpy()
 
-    formatted_categories = []
-    for subcategory in all_cats:
-        subcategories = subcategory.split(',')
-        new_subcategories = [s for s in subcategories if '_' not in s]
-        formatted_categories.append(new_subcategories[0])
     
     # Initialize the OneHotEncoder
     encoder = OneHotEncoder(sparse_output=False)
-    categories = np.array(formatted_categories).reshape(-1, 1)
+    categories = np.array(all_cats).reshape(-1, 1)
     # Fit and transform the data
     one_hot_encoded = encoder.fit_transform(categories)
     print(f"After OHE categories shape: {one_hot_encoded.shape}")
@@ -175,8 +155,8 @@ if __name__ == "__main__":
     tsne_pc = get_tsne(pca_pc)
     print('TSNE Completed')
 
-    plot_tsne(tsne_t, labels, cat_mapping, "text", exp_name)
-    plot_tsne(tsne_i, labels, cat_mapping, "image", exp_name)
-    plot_tsne(tsne_pc, labels, cat_mapping, "pc", exp_name)
+    plot_tsne(tsne_t, labels, cat_mapping, "text", exp)
+    plot_tsne(tsne_i, labels, cat_mapping, "image", exp)
+    plot_tsne(tsne_pc, labels, cat_mapping, "pc", exp)
     print("Plotting Completed")
-    #"""
+    # """

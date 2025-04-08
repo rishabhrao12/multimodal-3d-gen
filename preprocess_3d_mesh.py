@@ -22,12 +22,17 @@ def point_cloud_from_mesh(mesh_id, mesh_dir, save_dir):
 
 
 if __name__ == "__main__":
-    df = pd.read_csv("Data/ShapeNetSem/Datasets/subset_template_200.csv")
+    df = pd.read_csv("Data/ShapeNetSem/Datasets/baseline_400.csv")
     mesh_ids = df['fullId'].to_list()
     mesh_dir = "Data/ShapeNetSem/Files/models-OBJ/models"
-    save_dir = "Data/ProcessedData/PointClouds"
+    save_dir = "Data/ProcessedData/baseline_400"
+    os.makedirs(save_dir, exist_ok=True)
     already_processed = [f for f in os.listdir(save_dir) if os.path.isfile(os.path.join(save_dir, f))]
     print(len(already_processed))
+    co = 0
     for mesh_id in mesh_ids:
         if f"{mesh_id}.npy" not in already_processed:
             point_cloud_from_mesh(mesh_id, mesh_dir, save_dir)
+            co += 1
+            if co == 8:
+                break

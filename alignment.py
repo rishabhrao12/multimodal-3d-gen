@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 from utils import *
 from rag import *
+import random
 
 class NTXentLoss(torch.nn.Module):
     def __init__(self, temperature=0.07):
@@ -74,11 +75,11 @@ class ComplexMLP(nn.Module):
     def __init__(self, in_dim, out_dim, dropout_rate=0.2):
             super().__init__()
             self.net = nn.Sequential(
-                nn.Linear(in_dim, 2*in_dim),
+                nn.Linear(in_dim, 512),
                 #nn.BatchNorm1d(2*in_dim),
                 nn.ReLU(),
                 nn.Dropout(dropout_rate),  # Dropout layer after ReLU activation
-                nn.Linear(2*in_dim, out_dim)
+                nn.Linear(512, out_dim)
             )
 
     def forward(self, x):
@@ -101,6 +102,17 @@ class ComplexAlignEncoder(nn.Module):
     
 def load_alignment(checkpoint_path, align_embd):
     align_model = AlignEncoder(align_embd)  # Ensure the architecture matches
+    state_dict = torch.load(checkpoint_path, map_location=torch.device('cpu'))  # Load to CPU
+    # Apply the weights to the model
+    align_model.load_state_dict(state_dict)
+    # Set to evaluation mode (if needed)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    align_model.to(device)
+    print('ALIGN Model Loaded Successfully!')
+    return align_model
+
+def load_complex_alignment(checkpoint_path, align_embd):
+    align_model = ComplexAlignEncoder(align_embd, dropout_rate=0.2)  # Ensure the architecture matches
     state_dict = torch.load(checkpoint_path, map_location=torch.device('cpu'))  # Load to CPU
     # Apply the weights to the model
     align_model.load_state_dict(state_dict)
@@ -223,6 +235,86 @@ class EncodeUserInput(nn.Module):
 
         return projection
 
+class EncodeUserInputComplex(nn.Module):
+    def __init__(self, align_path="TrainedModels/Baseline/150.pth", align_embd=400):
+        super().__init__()
+        self.align_path = align_path
+        self.align_embd = align_embd
+
+        self.clip_encoder = None
+
+        # Loading models
+        self.load_models()
+
+        # Preprocessing functions
+        self.tokenizer = open_clip.tokenize
+        self.transform = transforms.Compose([
+            transforms.Resize((518, 518)),  # Resize to DINO's expected input size
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # DINOv2 normalization
+        ])
+        self.pclip_preprocess = image_transform(
+            self.clip_encoder.visual.image_size,  # Correct image size for CLIP
+            is_train=False  # Ensures we use inference preprocessing
+        )
+
+    def preprocess_text(self, text_prompt):
+        max_length = 77
+        tokenized_text = self.tokenizer([text_prompt])
+        #print(tokenized_text.shape)
+        return tokenized_text
+
+    def preprocess_img(self, img_prompt):
+        image_tensor = self.transform(img_prompt).unsqueeze(0)
+        #print(image_tensor.shape)
+        return image_tensor
+
+    def preprocess_pc(self, pc_prompt):
+        num_points = 1024
+        indices = np.random.choice(pc_prompt.shape[0], num_points, replace=False)
+        # Sample the selected points
+        sampled_pc = pc_prompt[indices]
+        depth_map = self.pclip_preprocess(point_cloud_to_depth_map(sampled_pc)).unsqueeze(0)  # Add batch dimension
+        return depth_map
+
+    def preprocess_input(self, prompt, modality):
+        if modality == "text":
+            processed_output = self.preprocess_text(prompt)
+        elif modality == "img":
+            processed_output = self.preprocess_img(prompt)
+        else:
+            processed_output = self.preprocess_pc(prompt)
+        return processed_output
+    
+    def load_models(self):
+        try:
+            self.dinov2_encoder = load_dinov2()
+            self.clip_encoder = load_clip()
+            self.pclip_encoder = load_point_clip()
+            self.align_model = load_complex_alignment(self.align_path, self.align_embd)
+            self.dinov2_encoder.eval()
+            self.clip_encoder.eval()
+            self.pclip_encoder.eval()
+            self.align_model.eval()
+        except Exception as e:
+            print(f'Error in Loading Models {e}')
+    
+    def get_projection(self, prompt, modality):
+        preprocessed_prompt = self.preprocess_input(prompt, modality)
+
+        with torch.no_grad():
+            if modality == "text":
+                embedding = self.clip_encoder.encode_text(preprocessed_prompt)
+                projection = self.align_model.text_proj_head(embedding)
+            elif modality == "img":
+                embedding = self.dinov2_encoder(preprocessed_prompt)
+                projection = self.align_model.img_proj_head(embedding)
+            else:
+                embedding = self.pclip_encoder.encode_image(preprocessed_prompt)
+                projection = self.align_model.pc_proj_head(embedding)
+
+        return projection
+    
 def get_aligned_output_from_user_prompt(dataset_path, img_dir, mesh_dir, prompt, input_modality, output_modality, encoder, cmr):
     df = pd.read_csv(dataset_path)
     projection = encoder.get_projection(prompt, input_modality)
@@ -252,6 +344,18 @@ def get_aligned_pc_from_user_prompt(pc_dir, prompt, input_modality, encoder, cmr
 def get_aligned_pc_from_projection(pc_dir, projection, input_modality, cmr):
     idx, mesh_ids, arrays = cmr.retrieve(projection, input_modality, 'pc', top_k=5)
     pc_path = f'{pc_dir}{mesh_ids[idx[1]]}.npy'
+    pc_data = np.load(pc_path)
+    num_points = 1024
+    indices = np.random.choice(pc_data.shape[0], num_points, replace=False)
+    # Sample the selected points
+    output = pc_data[indices]
+
+    return torch.from_numpy(output)
+
+def get_random_aligned_pc_from_projection(pc_dir, projection, input_modality, cmr, k=5):
+    idx, mesh_ids, arrays = cmr.retrieve(projection, input_modality, 'pc', top_k=k)
+    index_choice = random.randint(1, k-1)
+    pc_path = f'{pc_dir}{mesh_ids[idx[index_choice]]}.npy'
     pc_data = np.load(pc_path)
     num_points = 1024
     indices = np.random.choice(pc_data.shape[0], num_points, replace=False)

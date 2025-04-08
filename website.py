@@ -29,18 +29,18 @@ import glob
 
 #Path to 3d mesh file to test
 obj_path = "/Data/ShapeNetSem/Files/models-OBJ/models/1004f30be305f33d28a1548e344f0e2e.obj"
-checkpoint_path = "TrainedModels/ALIGN/Baseline/150.pth"
-dataset_path = "Data/ShapeNetSem/Datasets/subset_template_200.csv"
-img_dir = "Data/ShapeNetSem/Images/subset_200/"
-pc_dir = "Data/ProcessedData/PointClouds/"
+checkpoint_path = "TrainedModels/ALIGN/final_template_30cat_fixed/100.pth" #"TrainedModels/ALIGN/subset_200_direct_new_loss_fixed_all/140.pth" #"TrainedModels/ALIGN/Baseline/150.pth"
+dataset_path = "Data/ShapeNetSem/Datasets/final_template_30cat.csv"
+img_dir = "Data/ShapeNetSem/Images/final_template_30cat/" #"Data/ShapeNetSem/Images/subset_200/"
+pc_dir = "Data/ProcessedData/final_template_30cat_pc/" #"Data/ProcessedData/PointClouds/"
 mesh_dir = "Data/ShapeNetSem/Files/models-OBJ/models/"
-embed_path = f"Embeddings/ALIGN/subset_template_rag.pt" # f"Embeddings/ALIGN/subset_template_200.pt"
+embed_path = f"Embeddings/ALIGN/final_template_30cat_fixed.pt" # f"Embeddings/ALIGN/subset_template_200.pt"
 frontend_dir = "/Users/rishabhrao/Documents/VSCode/multimodal-3d-gen/env/lib/python3.12/site-packages/streamlit_3d/frontend/"
 align_embd = 400
 
 @st.cache_resource
 def load_encoder(checkpoint_path, align_embd):
-    return EncodeUserInput(align_path=checkpoint_path, align_embd=align_embd)
+    return EncodeUserInputComplex(align_path=checkpoint_path, align_embd=align_embd)
 
 @st.cache_resource
 def load_cmr(dataset_path, embed_path):

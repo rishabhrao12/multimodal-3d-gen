@@ -268,6 +268,26 @@ def create_snapshots_for_dataset(dataset_path, mesh_dir, img_dir, num_views):
     dataset = pd.read_csv(dataset_path)
     no_errors = 0
     errored_meshes = []
+
+    mesh_ids = dataset['fullId'].to_list()
+    already_processed = [f for f in os.listdir(img_dir) if os.path.isdir(os.path.join(img_dir, f))]
+    print(len(already_processed))
+    co = 0
+
+    for mesh_id in mesh_ids:
+        if mesh_id not in already_processed:
+            try:
+                angle_step_snapshots(mesh_id, mesh_dir, img_dir, num_views)
+                co += 1
+            except Exception as e:
+                no_errors += 1
+                errored_meshes.append(mesh_id)
+                print(e)
+                continue
+        if co == 100:
+            break
+    
+    """
     for index, row in dataset.iterrows():
         try:
             mesh_id = row['fullId']
@@ -277,6 +297,23 @@ def create_snapshots_for_dataset(dataset_path, mesh_dir, img_dir, num_views):
             errored_meshes.append(mesh_id)
             print(e)
             continue
-
+    """
     print(f'Snapshots successfull for {dataset.shape[0] - no_errors} meshes and errors for {no_errors} meshes')
     print(f'Meshes that errored out are: {errored_meshes}')
+
+def sample_by_categories(df, num_categories, num_samples):
+    # Ensure that the category column exists and is of type string
+    if 'category' not in df.columns:
+        raise ValueError("The DataFrame must have a 'category' column.")
+
+    # Sample the specified number of categories
+    categories = df['category'].value_counts().index[:num_categories]
+
+    sampled_df = pd.DataFrame()
+
+    # For each selected category, sample the required number of samples
+    for category in categories:
+        category_samples = df[df['category'] == category].sample(n=num_samples, random_state=42)
+        sampled_df = pd.concat([sampled_df, category_samples])
+
+    return sampled_df

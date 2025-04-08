@@ -45,6 +45,36 @@ class RAGDecoder(nn.Module):
         x = self.fc3(x)
         return x.view(-1, self.num_points, 3)
     
+class HiddenLayerComplex(nn.Module):
+    def __init__(self, dim, dropout_rate=0.2):
+        super().__init__()
+        self.fc = nn.Linear(dim, dim)
+        self.dropout = nn.Dropout(dropout_rate) 
+    
+    def forward(self, x):
+        x = self.fc(x)
+        x = torch.relu(x)
+        x = self.dropout(x)
+        return x
+    
+class RAGDecoderComplex(nn.Module):
+    def __init__(self, in_dim, hidden_dim, out_dim, num_hidden_layers=1, num_points=1024, dropout_rate=0.2):
+        super().__init__()
+        self.fc1 = nn.Linear(in_dim, hidden_dim)
+        self.fc2 = nn.Sequential(*[HiddenLayerComplex(hidden_dim, dropout_rate) for i in range(num_hidden_layers)])
+        self.fc3 = nn.Linear(hidden_dim, out_dim)
+        self.num_points = num_points
+        self.relu = nn.ReLU
+        self.dropout = nn.Dropout(dropout_rate) 
+    
+    def forward(self, x):
+        x = self.fc1(x)
+        x = torch.relu(x)
+        x = self.dropout(x)
+        x = self.fc2(x)
+        x = self.fc3(x)
+        return x.view(-1, self.num_points, 3)
+    
 def load_rag(checkpoint_path="TrainedModels/RAG/four_hidden/2000.pth"):
     num_points = 1024  # Number of points in the point cloud
     in_dim = 400 + num_points * 3  # Input dimension (projection + flattened point cloud)

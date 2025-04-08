@@ -309,6 +309,7 @@ class ChoiceEmbeddingDataset(Dataset):
             point_cloud (torch.Tensor): point cloud of mesh (B, 1024, 3)
         """
         mesh_id = self.dataframe.loc[idx, 'fullId']
+
         dict_path = os.path.join(self.embed_dir, f'{mesh_id}.pt')
         data_dict = torch.load(dict_path)
         # Retrieve the corresponding embedding using the index
@@ -322,3 +323,115 @@ class ChoiceEmbeddingDataset(Dataset):
 
         # Now return the embedding (and other data if needed)
         return idx, text_embedding[text_index], img_embedding[img_index], pc_embedding[pc_index]
+    
+class CategoryChoiceEmbeddingDataset(Dataset):
+    """Creates a paired modality dataset that returns text image and pc embedding (from pretrained encoders)
+
+    Args:
+        Dataset (_type_): _description_
+    """
+    def __init__(self, dataset_path, embd_dir, label_to_idx):
+        super().__init__()
+        # For Text
+        self.dataframe = pd.read_csv(dataset_path)
+        self.embed_dir = embd_dir
+        """ 
+        data_dict = {
+            "mesh_id": all_text_emb,
+            "text_emb": [3, 768],
+            "img_emb": [4, 384],
+            "pc_emb": [8, 768],
+        }
+        """
+        self.label_to_idx = label_to_idx
+    
+    def __len__(self):
+        return len(self.dataframe)
+    
+    def __getitem__(self, idx):
+        """
+        Returns:
+            idx (int): Index
+            tokenized_text (torch.Tensor): Tokenized text for CLIP (B, 77)
+            image_tensor (torch.Tensor): preprocessed image for Dinov2 (B, 3, 518, 518)
+            point_cloud (torch.Tensor): point cloud of mesh (B, 1024, 3)
+        """
+        mesh_id = self.dataframe.loc[idx, 'fullId']
+
+        category = self.dataframe.loc[idx, 'category']
+        if ',' in category:
+            categories = category.split(',')
+            category = [category for category in categories if '_' not in category][0]
+
+        category_label = self.label_to_idx[category]
+        category_tensor = torch.tensor(category_label, dtype=torch.long)
+
+        dict_path = os.path.join(self.embed_dir, f'{mesh_id}.pt')
+        data_dict = torch.load(dict_path)
+        # Retrieve the corresponding embedding using the index
+        text_embedding = data_dict['text_emb']
+        img_embedding = data_dict['img_emb']
+        pc_embedding = data_dict['pc_emb']
+
+        text_index = random.randint(0, text_embedding.shape[0] - 1)
+        img_index = random.randint(0, img_embedding.shape[0] - 1)
+        pc_index = random.randint(0, pc_embedding.shape[0] - 1)
+
+        # Now return the embedding (and other data if needed)
+        return idx, text_embedding[text_index], img_embedding[img_index], pc_embedding[pc_index], category_tensor
+    
+class CategoryChoiceEmbeddingDatasetAllDmap(Dataset):
+    """Creates a paired modality dataset that returns text image and pc embedding (from pretrained encoders)
+
+    Args:
+        Dataset (_type_): _description_
+    """
+    def __init__(self, dataset_path, embd_dir, label_to_idx):
+        super().__init__()
+        # For Text
+        self.dataframe = pd.read_csv(dataset_path)
+        self.embed_dir = embd_dir
+        """ 
+        data_dict = {
+            "mesh_id": all_text_emb,
+            "text_emb": [3, 768],
+            "img_emb": [4, 384],
+            "pc_emb": [8, 768],
+        }
+        """
+        self.label_to_idx = label_to_idx
+    
+    def __len__(self):
+        return len(self.dataframe)
+    
+    def __getitem__(self, idx):
+        """
+        Returns:
+            idx (int): Index
+            tokenized_text (torch.Tensor): Tokenized text for CLIP (B, 77)
+            image_tensor (torch.Tensor): preprocessed image for Dinov2 (B, 3, 518, 518)
+            point_cloud (torch.Tensor): point cloud of mesh (B, 1024, 3)
+        """
+        mesh_id = self.dataframe.loc[idx, 'fullId']
+
+        category = self.dataframe.loc[idx, 'category']
+        if ',' in category:
+            categories = category.split(',')
+            category = [category for category in categories if '_' not in category][0]
+
+        category_label = self.label_to_idx[category]
+        category_tensor = torch.tensor(category_label, dtype=torch.long)
+
+        dict_path = os.path.join(self.embed_dir, f'{mesh_id}.pt')
+        data_dict = torch.load(dict_path)
+        # Retrieve the corresponding embedding using the index
+        text_embedding = data_dict['text_emb']
+        img_embedding = data_dict['img_emb']
+        pc_embedding = data_dict['pc_emb']
+
+        text_index = random.randint(0, text_embedding.shape[0] - 1)
+        img_index = random.randint(0, img_embedding.shape[0] - 1)
+        pc_index = random.randint(0, pc_embedding.shape[0] - 1)
+
+        # Now return the embedding (and other data if needed)
+        return idx, text_embedding[text_index], img_embedding[img_index], pc_embedding, category_tensor
